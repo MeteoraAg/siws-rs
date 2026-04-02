@@ -1,5 +1,5 @@
-use crate::message::{ParseError, ValidateError};
-use ed25519_dalek::{PublicKey, Signature};
+use crate::message::{ParseError, SiwsMessage, ValidateError, ValidateOptions};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -19,18 +19,47 @@ pub struct SolAccount {
 
 impl SiwsOutput {
     pub fn verify(&self) -> Result<bool, VerifyError> {
-        let pubkey = PublicKey::from_bytes(&self.account.public_key)
+        let pubkey_bytes: [u8; 32] = self
+            .account
+            .public_key
+            .as_slice()
+            .try_into()
             .map_err(|_| SiwsOutputError::InvalidPubkey)?;
+        let pubkey =
+            VerifyingKey::from_bytes(&pubkey_bytes).map_err(|_| SiwsOutputError::InvalidPubkey)?;
 
-        let signature = Signature::from_bytes(&self.signature)
+        let sig_bytes: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
             .map_err(|_| SiwsOutputError::InvalidSignature)?;
+        let signature = Signature::from_bytes(&sig_bytes);
 
-        // Verify signature
         pubkey
             .verify_strict(&self.signed_message, &signature)
             .map_err(|_| VerifyError::VerificationFailure)?;
 
         Ok(true)
+    }
+
+    /// Verify the Ed25519 signature, parse the SIWS message, check that the
+    /// address matches the public key, and validate fields against the given options.
+    pub fn authenticate(
+        &self,
+        options: ValidateOptions,
+    ) -> Result<SiwsMessage, VerifyError> {
+        self.verify()?;
+
+        let message = SiwsMessage::try_from(&self.signed_message)?;
+
+        let address = bs58::encode(&self.account.public_key).into_string();
+        if message.address != address {
+            return Err(VerifyError::AddressMismatch);
+        }
+
+        message.validate(options)?;
+
+        Ok(message)
     }
 }
 
@@ -51,8 +80,11 @@ pub enum VerifyError {
     #[error("Signature verification failed")]
     VerificationFailure,
 
+    #[error("Address does not match public key")]
+    AddressMismatch,
+
     #[error("")]
-    Infallible
+    Infallible,
 }
 
 #[derive(Debug, Error)]
