@@ -67,17 +67,20 @@ pub struct ValidateOptions {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum ValidateError {
-    #[error("Domain mismatch.")]
-    Domain,
+    #[error("Domain mismatch")]
+    DomainMismatch,
 
-    #[error("Message is expired.")]
-    ExpirationTime,
+    #[error("Nonce mismatch")]
+    NonceMismatch,
 
-    #[error("'Issued At' is before current time.")]
-    IssuedAt,
+    #[error("Message has expired")]
+    Expired,
 
-    #[error("'Not Before' is before current time.")]
-    NotBefore,
+    #[error("Message was issued in the future")]
+    IssuedInFuture,
+
+    #[error("Message is not yet valid")]
+    NotYetValid,
 }
 
 #[derive(Error, Debug)]
@@ -97,14 +100,14 @@ impl SiwsMessage {
     pub fn validate(&self, options: ValidateOptions) -> Result<(), ValidateError> {
         if let Some(domain) = options.domain {
             if self.domain != domain {
-                return Err(ValidateError::Domain);
+                return Err(ValidateError::DomainMismatch);
             }
         }
 
         if let Some(options_nonce) = &options.nonce {
             if let Some(message_nonce) = &self.nonce {
                 if message_nonce != options_nonce {
-                    return Err(ValidateError::ExpirationTime);
+                    return Err(ValidateError::NonceMismatch);
                 }
             }
         }
@@ -113,19 +116,19 @@ impl SiwsMessage {
         if let Some(check_time) = options.time {
             if let Some(issued_at) = &self.issued_at {
                 if issued_at > &check_time {
-                    return Err(ValidateError::IssuedAt);
+                    return Err(ValidateError::IssuedInFuture);
                 }
             }
 
             if let Some(expiration_time) = &self.expiration_time {
-                if expiration_time > &check_time {
-                    return Err(ValidateError::ExpirationTime);
+                if expiration_time < &check_time {
+                    return Err(ValidateError::Expired);
                 }
             }
 
             if let Some(not_before) = &self.not_before {
-                if not_before < &check_time {
-                    return Err(ValidateError::NotBefore);
+                if not_before > &check_time {
+                    return Err(ValidateError::NotYetValid);
                 }
             }
         }
@@ -498,4 +501,161 @@ mod test {
     }
 
     // Validation
+
+    const METEORA_DOMAIN: &str = "meteora.ag";
+    const METEORA_ADDR: &str = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+
+    fn meteora_message() -> SiwsMessage {
+        SiwsMessage {
+            domain: METEORA_DOMAIN.into(),
+            address: METEORA_ADDR.into(),
+            statement: Some("Sign in to access your Meteora referral dashboard.".into()),
+            uri: Some("https://meteora.ag".into()),
+            version: Some("1".into()),
+            chain_id: Some("mainnet".into()),
+            nonce: Some("abc123".into()),
+            issued_at: Some(TimeStamp::from_str("2026-04-02T10:30:00.000Z").unwrap()),
+            expiration_time: Some(TimeStamp::from_str("2026-04-02T10:35:00.000Z").unwrap()),
+            not_before: None,
+            request_id: None,
+            resources: vec![],
+        }
+    }
+
+    #[test]
+    fn parse_meteora_message() {
+        let msg = "\
+meteora.ag wants you to sign in with your Solana account:\n\
+7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU\n\
+\n\
+Sign in to access your Meteora referral dashboard.\n\
+\n\
+URI: https://meteora.ag\n\
+Version: 1\n\
+Chain ID: mainnet\n\
+Nonce: abc123\n\
+Issued At: 2026-04-02T10:30:00.000Z\n\
+Expiration Time: 2026-04-02T10:35:00.000Z";
+
+        let m = SiwsMessage::from_str(msg).unwrap();
+        assert_eq!(METEORA_DOMAIN, m.domain);
+        assert_eq!(METEORA_ADDR, m.address);
+        assert_eq!(
+            Some("Sign in to access your Meteora referral dashboard.".into()),
+            m.statement
+        );
+        assert_eq!(Some("https://meteora.ag".into()), m.uri);
+        assert_eq!(Some("1".into()), m.version);
+        assert_eq!(Some("mainnet".into()), m.chain_id);
+        assert_eq!(Some("abc123".into()), m.nonce);
+    }
+
+    #[test]
+    fn meteora_message_roundtrip() {
+        let original = meteora_message();
+        let serialized = String::from(&original);
+        let parsed = SiwsMessage::from_str(&serialized).unwrap();
+
+        assert_eq!(original.domain, parsed.domain);
+        assert_eq!(original.address, parsed.address);
+        assert_eq!(original.statement, parsed.statement);
+        assert_eq!(original.uri, parsed.uri);
+        assert_eq!(original.version, parsed.version);
+        assert_eq!(original.chain_id, parsed.chain_id);
+        assert_eq!(original.nonce, parsed.nonce);
+        assert_eq!(original.issued_at, parsed.issued_at);
+        assert_eq!(original.expiration_time, parsed.expiration_time);
+    }
+
+    #[test]
+    fn validate_domain_mismatch() {
+        let msg = meteora_message();
+        let opts = ValidateOptions {
+            domain: Some("evil.com".into()),
+            ..Default::default()
+        };
+        assert_eq!(msg.validate(opts), Err(ValidateError::DomainMismatch));
+    }
+
+    #[test]
+    fn validate_domain_match() {
+        let msg = meteora_message();
+        let opts = ValidateOptions {
+            domain: Some(METEORA_DOMAIN.into()),
+            ..Default::default()
+        };
+        assert!(msg.validate(opts).is_ok());
+    }
+
+    #[test]
+    fn validate_nonce_mismatch() {
+        let msg = meteora_message();
+        let opts = ValidateOptions {
+            nonce: Some("wrong_nonce".into()),
+            ..Default::default()
+        };
+        assert_eq!(msg.validate(opts), Err(ValidateError::NonceMismatch));
+    }
+
+    #[test]
+    fn validate_nonce_match() {
+        let msg = meteora_message();
+        let opts = ValidateOptions {
+            nonce: Some("abc123".into()),
+            ..Default::default()
+        };
+        assert!(msg.validate(opts).is_ok());
+    }
+
+    #[test]
+    fn validate_expired_message() {
+        let msg = meteora_message(); // expires at 2026-04-02T10:35:00Z
+        let opts = ValidateOptions {
+            time: Some(OffsetDateTime::parse("2026-04-02T11:00:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            ..Default::default()
+        };
+        assert_eq!(msg.validate(opts), Err(ValidateError::Expired));
+    }
+
+    #[test]
+    fn validate_not_expired() {
+        let msg = meteora_message(); // expires at 2026-04-02T10:35:00Z
+        let opts = ValidateOptions {
+            time: Some(OffsetDateTime::parse("2026-04-02T10:32:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            ..Default::default()
+        };
+        assert!(msg.validate(opts).is_ok());
+    }
+
+    #[test]
+    fn validate_issued_in_future() {
+        let msg = meteora_message(); // issued at 2026-04-02T10:30:00Z
+        let opts = ValidateOptions {
+            time: Some(OffsetDateTime::parse("2026-04-02T10:00:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            ..Default::default()
+        };
+        assert_eq!(msg.validate(opts), Err(ValidateError::IssuedInFuture));
+    }
+
+    #[test]
+    fn validate_not_before_in_future() {
+        let mut msg = meteora_message();
+        msg.not_before = Some(TimeStamp::from_str("2026-04-02T10:34:00.000Z").unwrap());
+        let opts = ValidateOptions {
+            time: Some(OffsetDateTime::parse("2026-04-02T10:32:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            ..Default::default()
+        };
+        assert_eq!(msg.validate(opts), Err(ValidateError::NotYetValid));
+    }
+
+    #[test]
+    fn validate_all_fields_pass() {
+        let msg = meteora_message();
+        let opts = ValidateOptions {
+            domain: Some(METEORA_DOMAIN.into()),
+            nonce: Some("abc123".into()),
+            time: Some(OffsetDateTime::parse("2026-04-02T10:32:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+        };
+        assert!(msg.validate(opts).is_ok());
+    }
 }

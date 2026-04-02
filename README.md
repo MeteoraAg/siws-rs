@@ -1,181 +1,202 @@
 # SIWS - Sign in With Solana Rust Library
 
-A simple Rust implementation of [CAIP-122](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/caip-122.md) (Sign in With X) for Solana, following the [Solana Wallet Standard](https://github.com/anza-xyz/wallet-standard?tab=readme-ov-file) and [Phantom Wallet's Sign In With Solana](https://github.com/phantom/sign-in-with-solana) protocol.
+A lightweight Rust implementation of [CAIP-122](https://github.com/ChainAgnostic/CAIPs/blob/main/CAIPs/caip-122.md) (Sign in With X) for Solana, following the [Solana Wallet Standard](https://github.com/anza-xyz/wallet-standard?tab=readme-ov-file) and [Phantom Wallet's Sign In With Solana](https://github.com/phantom/sign-in-with-solana) protocol.
+
+No Solana SDK dependency -- uses `ed25519-dalek` 2.x, `bs58`, and `time` to keep it lightweight.
 
 ## Installation
 
-SIWS can be easily installed by including the `siws` crate as a dependency inside your project's `Cargo.toml`:
+Add `siws` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-# ...other dependencies
-siws = "0.0.1"
-# ...other dependencies
+siws = { git = "ssh://git@github.com/MeteoraAg/siws-rs.git" }
 ```
 
 ## Usage
 
-SIWS exposes two main structs - `SiwsMessage` for message validation, and `SiwsOutput` for sign-in verification.
+SIWS exposes two main structs:
+
+- `SiwsMessage` -- parse, construct, and validate CAIP-122 / EIP-4361 formatted messages
+- `SiwsOutput` -- verify Ed25519 signatures and validate sign-in outputs
 
 `SiwsMessage` is analogous to Solana Wallet Standard's `SolanaSignInInput`, while `SiwsOutput` is analogous to `SolanaSignInOutput`.
 
-Using these, you can verify the sign in request, and validate the sign-in message. 
+### Verify and validate in one step
 
-You will mainly want to use the `SiwsOutput` struct, as its primary purpose is to provide you with simple methods to verify its signature.
+`authenticate` combines signature verification, message parsing, address-public key matching, and field validation:
 
-However, if you wish to validate the SIWS Message (which you should), you can extract it from `SiwsOutput`'s `signed_message` field using `SiwsMessage::try_from`.
+```rust
+use siws::message::ValidateOptions;
+use siws::output::SiwsOutput;
+use time::OffsetDateTime;
 
-### An End-to-end example
+fn handle_sign_in(output: SiwsOutput) -> Result<(), Box<dyn std::error::Error>> {
+    let message = output.authenticate(ValidateOptions {
+        domain: Some("meteora.ag".into()),
+        nonce: Some("server-generated-nonce".into()),
+        time: Some(OffsetDateTime::now_utc()),
+    })?;
 
-The below example code shows a complete Rust program using `actix-web`, `time`, and `siws` to receive a JSON object containing the SIWS Output, creating a SIWS message from it, verifying the signature and validating the message.
+    println!("Authenticated wallet: {}", message.address);
+    println!("Chain: {:?}", message.chain_id);
 
-`Cargo.toml`:
-```toml filename="Cargo.toml"
-[package]
-name = "siws-server-example"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-actix-web = "4.5.1"
-siws = { path = "../../siws-rs" }
-time = "0.3.36"
+    Ok(())
+}
 ```
 
-`src/main.rs`
-```rust filename="src/main.rs"
-use actix_web::{error, web, App, HttpServer, Result};
+This will:
+
+1. Verify the Ed25519 signature
+2. Parse the signed message into a `SiwsMessage`
+3. Check that the message address matches the signer's public key
+4. Validate domain, nonce, and timestamps against the provided options
+
+### Verify signature only
+
+If you want to handle parsing and validation separately:
+
+```rust
 use siws::message::{SiwsMessage, ValidateOptions};
 use siws::output::SiwsOutput;
 use time::OffsetDateTime;
 
-async fn validate_and_verify(output: web::Json<SiwsOutput>) -> Result<String> {
-    // Read the message from output.signed_message
-    let message = SiwsMessage::try_from(&output.signed_message).map_err(error::ErrorBadRequest)?;
+fn handle_sign_in(output: SiwsOutput) -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Verify the Ed25519 signature
+    output.verify()?;
 
-    // Validate the message
-    message
-        .validate(ValidateOptions {
-            domain: Some("www.exmaple.com".into()), // Ensure domain is www.example.com
-            nonce: Some("1337nonce".into()), // Ensure nonce is 1337nonce
-            time: Some(OffsetDateTime::now_utc()) // Validate IAT, EXP, and NBF according to current time
+    // 2. Parse the message
+    let message = SiwsMessage::try_from(&output.signed_message)?;
+
+    // 3. Validate fields
+    message.validate(ValidateOptions {
+        domain: Some("meteora.ag".into()),
+        nonce: Some("server-generated-nonce".into()),
+        time: Some(OffsetDateTime::now_utc()),
+    })?;
+
+    Ok(())
+}
+```
+
+### Axum example
+
+```rust
+use axum::{http::StatusCode, Json};
+use siws::message::ValidateOptions;
+use siws::output::SiwsOutput;
+use time::OffsetDateTime;
+
+async fn verify_handler(
+    Json(output): Json<SiwsOutput>,
+) -> Result<String, (StatusCode, String)> {
+    let message = output
+        .authenticate(ValidateOptions {
+            domain: Some("meteora.ag".into()),
+            nonce: Some("expected-nonce".into()),
+            time: Some(OffsetDateTime::now_utc()),
         })
-        .map_err(error::ErrorBadRequest)?;
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
 
-    output.verify().map_err(error::ErrorBadRequest)?;
-
-    Ok(String::from("Successfully verified!"))
-}
-
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| App::new().route("/", web::post().to(validate_and_verify)))
-        .bind(("127.0.0.1", 8080))?
-        .run()
-        .await
-}
-
-```
-
-`SIWS Output` derives `serde`'s `Serialize` and `Deserialize` traits, and also automatically renames all of its fields as `camelCase` for simpler Solana Wallet support.
-
-### Verify sign-in with SIWS Output
-
-Whenever you have a SIWS Output, all you need to do is call its `verify` method to verify its signature. You can construct a SIWS Output by parsing a JSON string.
-
-See `tests/integration_tests.rs` for details.
-
-```rust
-fn verify_from_json_message() -> Result<(), VerifyError> {
-    let json = include_str!("test_message.json");
-
-    let output: SiwsOutput = serde_json::from_str(json).unwrap();
-
-    output.verify()?; // Result<(), VerifyError>
-
-    Ok(())
+    Ok(format!("Authenticated: {}", message.address))
 }
 ```
 
-### Validate SIWS Message from SIWS Output
+### Parse SIWS message from string
 
-From the previous example, if you wanted to also validate the SIWS Message against a certain domain, nonce, or time, you can do the following:
+Parse a CAIP-122 / EIP-4361 ABNF formatted message:
 
 ```rust
-let message = SiwsMessage::try_from(&output.signed_message).map_err(error::ErrorBadRequest)?;
+use std::str::FromStr;
+use siws::message::SiwsMessage;
 
-message.validate(ValidateOptions {
-  ...
-})?; // Result<(), ValidateError>
+let message = SiwsMessage::from_str(
+    "meteora.ag wants you to sign in with your Solana account:\n\
+     7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU\n\
+     \n\
+     Sign in to access your Meteora referral dashboard.\n\
+     \n\
+     URI: https://meteora.ag\n\
+     Version: 1\n\
+     Chain ID: mainnet\n\
+     Nonce: abc123\n\
+     Issued At: 2026-04-02T10:30:00.000Z\n\
+     Expiration Time: 2026-04-02T10:35:00.000Z",
+).unwrap();
 
+assert_eq!(message.domain, "meteora.ag");
+assert_eq!(message.chain_id, Some("mainnet".into()));
 ```
 
-### SIWS Message
+### Construct a SIWS message
 
-The `SiwsMessage` struct is used to serialize/deserialize the SIWS Message from/to its ABNF form.
-Additional methods are implemented to support parsing it from a `&Vec<u8>` and `&[u8]`, as Solana Wallet-signed messages usually come as UTF-8 byte arrays.
-
-#### Parse SIWS message from string
-
-You can parse a SIWS message from any string that adheres to its [specified ABNF](https://github.com/phantom/sign-in-with-solana?tab=readme-ov-file#abnf-message-format):
+Build an ABNF-formatted message from structured input:
 
 ```rust
-fn example_from_str() -> Result<(), ParseError> {
-    let msg = SiwsMessage::from_str(
-        "\
-        www.example.com wants you to sign in with your Solana account:\n\
-        BSmWDgE9ex6dZYbiTsJGcwMEgFp8q4aWh92hdErQPeVW\n\
-        \n\
-        This is some test statement\n\
-        \n\
-        URI: test_uri\n\
-        Version: 1\n\
-        Chain ID: mainnet\n\
-        Nonce: abcdefgh\n\
-        Issued At: 2024-04-24T17:19:02.991469647Z\n\
-        Expiration Time: 2024-04-24T23:19:02.991482123Z\n\
-        Not Before: 2024-04-24T18:19:02.99148447Z\n\
-        Request ID: test_rid\n\
-        Resources:\n\
-        - https://www.example.com/test_one\n\
-        - https://www.example.com/test_two\
-        ",
-    )?;
+use siws::message::SiwsMessage;
 
-    // Do something with the message
-
-    Ok(())
-}
-```
-
-#### Serialize the SIWS message according to its ABNF
-
-You can get the ABNF-compliant string for your SIWS Message by using `String::from`:
-
-```rust
-let siws_message = SiwsMessage {
-    domain: "www.exmaple.com".into(),
-    address: "someaddress".into(),
+let message = SiwsMessage {
+    domain: "meteora.ag".into(),
+    address: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU".into(),
+    statement: Some("Sign in to access your Meteora referral dashboard.".into()),
+    version: Some("1".into()),
+    chain_id: Some("mainnet".into()),
     ..Default::default()
 };
 
-let message_string = String::from(&siws_message);
-
-print!("{}", message_string);
+let message_string = String::from(&message);
 ```
 
-## Contributing
+### ValidateOptions
 
-This project aims to provide basic functionality of Sign in With Solana to Rust developers. As such, it's intended to be kept small and manageable.
+| Field | Purpose |
+|---|---|
+| `domain` | Reject if message domain doesn't match |
+| `nonce` | Reject if message nonce doesn't match |
+| `time` | Reject if message is expired, issued in the future, or not yet valid |
 
-Contributing to this repository is highly encouraged. 
+All fields are optional. Omitted fields skip that check.
 
-If you find any bugs, please try cloning the repository and fixing them yourself, then opening a PR with your proposed fixes.
+### Error types
 
-The project is also open to new features, however feature requests should be discussed through issues beforehand to align with the minimalist nature of the project.
+`ValidateError` variants:
+
+| Variant | Meaning |
+|---|---|
+| `DomainMismatch` | Message domain doesn't match expected domain |
+| `NonceMismatch` | Message nonce doesn't match expected nonce |
+| `Expired` | Message expiration time has passed |
+| `IssuedInFuture` | Message `issuedAt` is after the check time |
+| `NotYetValid` | Message `notBefore` is after the check time |
+
+`VerifyError` variants:
+
+| Variant | Meaning |
+|---|---|
+| `VerificationFailure` | Ed25519 signature verification failed |
+| `AddressMismatch` | Message address doesn't match the signer's public key |
+| `MessageParse` | Failed to parse the signed message |
+| `MessageValidate` | Field validation failed |
+| `SiwsOutput` | Invalid public key or signature bytes |
+
+## SiwsOutput JSON format
+
+`SiwsOutput` derives serde `Serialize`/`Deserialize` with `camelCase` field names for Solana Wallet Standard compatibility:
+
+```json
+{
+  "account": { "publicKey": [/* 32 bytes */] },
+  "signedMessage": [/* UTF-8 message bytes */],
+  "signature": [/* 64 bytes */]
+}
+```
 
 ## Security
 
-This library has not undergone security audits.
+This library has not undergone a security audit. Use at your own risk.
 
-If you or anyone you know wants to audit `siws-rs`, please contact the authors directly.
+If you discover a vulnerability, please report it privately to the maintainers.
+
+## License
+
+MIT
