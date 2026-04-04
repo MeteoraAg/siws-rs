@@ -1,0 +1,7 @@
+{
+  "account": {
+    "publicKey": "HVWqRCoCZqn9DojSyGaJBrpnzbJkrLjdZRd4SP8Djw8"
+  },
+  "signedMessage": "bG9jYWxob3N0IHdhbnRzIHlvdSB0byBzaWduIGluIHdpdGggeW91ciBTb2xhbmEgYWNjb3VudDoKSFZXcVJDb0NacW45RG9qU3lHYUpCcnBuemJKa3JMamRaUmQ0U1A4RGp3OAoKR2l2ZSBtZSBhbGwgeW91ciBtb25leSE=",
+  "signature": "667dAaWtEWjW7og8l9C+/6ZaLJTvgITkXvkmEd7I4I3AGNDWEdvjmlnFrdCDAqn+TsBw/CzFvnqp5z9abrNKDg=="
+}
