@@ -611,7 +611,13 @@ Expiration Time: 2026-04-02T10:35:00.000Z";
     fn validate_expired_message() {
         let msg = meteora_message(); // expires at 2026-04-02T10:35:00Z
         let opts = ValidateOptions {
-            time: Some(OffsetDateTime::parse("2026-04-02T11:00:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            time: Some(
+                OffsetDateTime::parse(
+                    "2026-04-02T11:00:00.000Z",
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap(),
+            ),
             ..Default::default()
         };
         assert_eq!(msg.validate(opts), Err(ValidateError::Expired));
@@ -621,7 +627,13 @@ Expiration Time: 2026-04-02T10:35:00.000Z";
     fn validate_not_expired() {
         let msg = meteora_message(); // expires at 2026-04-02T10:35:00Z
         let opts = ValidateOptions {
-            time: Some(OffsetDateTime::parse("2026-04-02T10:32:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            time: Some(
+                OffsetDateTime::parse(
+                    "2026-04-02T10:32:00.000Z",
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap(),
+            ),
             ..Default::default()
         };
         assert!(msg.validate(opts).is_ok());
@@ -631,7 +643,13 @@ Expiration Time: 2026-04-02T10:35:00.000Z";
     fn validate_issued_in_future() {
         let msg = meteora_message(); // issued at 2026-04-02T10:30:00Z
         let opts = ValidateOptions {
-            time: Some(OffsetDateTime::parse("2026-04-02T10:00:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            time: Some(
+                OffsetDateTime::parse(
+                    "2026-04-02T10:00:00.000Z",
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap(),
+            ),
             ..Default::default()
         };
         assert_eq!(msg.validate(opts), Err(ValidateError::IssuedInFuture));
@@ -642,7 +660,13 @@ Expiration Time: 2026-04-02T10:35:00.000Z";
         let mut msg = meteora_message();
         msg.not_before = Some(TimeStamp::from_str("2026-04-02T10:34:00.000Z").unwrap());
         let opts = ValidateOptions {
-            time: Some(OffsetDateTime::parse("2026-04-02T10:32:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            time: Some(
+                OffsetDateTime::parse(
+                    "2026-04-02T10:32:00.000Z",
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap(),
+            ),
             ..Default::default()
         };
         assert_eq!(msg.validate(opts), Err(ValidateError::NotYetValid));
@@ -654,7 +678,13 @@ Expiration Time: 2026-04-02T10:35:00.000Z";
         let opts = ValidateOptions {
             domain: Some(METEORA_DOMAIN.into()),
             nonce: Some("abc123".into()),
-            time: Some(OffsetDateTime::parse("2026-04-02T10:32:00.000Z", &time::format_description::well_known::Rfc3339).unwrap()),
+            time: Some(
+                OffsetDateTime::parse(
+                    "2026-04-02T10:32:00.000Z",
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap(),
+            ),
         };
         assert!(msg.validate(opts).is_ok());
     }
