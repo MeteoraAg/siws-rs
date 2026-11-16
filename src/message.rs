@@ -98,38 +98,37 @@ pub enum ParseError {
 
 impl SiwsMessage {
     pub fn validate(&self, options: ValidateOptions) -> Result<(), ValidateError> {
-        if let Some(domain) = options.domain {
-            if self.domain != domain {
-                return Err(ValidateError::DomainMismatch);
-            }
+        if let Some(domain) = options.domain
+            && self.domain != domain
+        {
+            return Err(ValidateError::DomainMismatch);
         }
 
-        if let Some(options_nonce) = &options.nonce {
-            if let Some(message_nonce) = &self.nonce {
-                if message_nonce != options_nonce {
-                    return Err(ValidateError::NonceMismatch);
-                }
-            }
+        if let Some(options_nonce) = &options.nonce
+            && let Some(message_nonce) = &self.nonce
+            && message_nonce != options_nonce
+        {
+            return Err(ValidateError::NonceMismatch);
         }
 
         // If options.time is Some, check all times against it
         if let Some(check_time) = options.time {
-            if let Some(issued_at) = &self.issued_at {
-                if issued_at > &check_time {
-                    return Err(ValidateError::IssuedInFuture);
-                }
+            if let Some(issued_at) = &self.issued_at
+                && issued_at > &check_time
+            {
+                return Err(ValidateError::IssuedInFuture);
             }
 
-            if let Some(expiration_time) = &self.expiration_time {
-                if expiration_time < &check_time {
-                    return Err(ValidateError::Expired);
-                }
+            if let Some(expiration_time) = &self.expiration_time
+                && expiration_time < &check_time
+            {
+                return Err(ValidateError::Expired);
             }
 
-            if let Some(not_before) = &self.not_before {
-                if not_before > &check_time {
-                    return Err(ValidateError::NotYetValid);
-                }
+            if let Some(not_before) = &self.not_before
+                && not_before > &check_time
+            {
+                return Err(ValidateError::NotYetValid);
             }
         }
 
